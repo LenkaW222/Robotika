@@ -5,13 +5,18 @@ robot = Rv6s(debug=False)
 robot.initialize()
 
 
-q0 = robot.get_q()
-print("Current q:", np.rad2deg(q0).round())
+q = robot.get_q()
+print("Current q:", np.rad2deg(q).round())
 
-pose = robot.fk(q0)
+
+q[5] = np.deg2rad(180)
+
+robot.move_to_q(q)
+robot.wait_for_motion_stop()
+
+pose = robot.fk(q)
 print("Current pose:")
 print(pose.round(3))
-
 
 robot.stop_robot()
 robot.close_connection()
