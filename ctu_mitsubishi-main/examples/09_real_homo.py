@@ -3,117 +3,154 @@ import cv2
 import numpy as np
 from ctu_mitsubishi import Rv6s
 
-def detect_hoop_center(img):
-    """Detects the circular hoop in the image and returns its pixel coordinates (u, v) and radius."""
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img.copy()
-    blur = cv2.GaussianBlur(gray, (9, 9), 2)
 
-    # 1. Primary approach: Hough Circles detection
+def find_hoop_center_cv(img):
+    """
+    Detekuje kruh v obrázku pomocí Houghovy transformace
+    a vrátí souřadnice středu (u, v) v pixelech a poloměr.
+    """
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+    blurred = cv2.GaussianBlur(gray, (9, 9), 2)
+
+    # Detekce kružnice (parametry přizpůsobeny velikosti kruhu na snímku)
     circles = cv2.HoughCircles(
-        blur, 
-        cv2.HOUGH_GRADIENT, 
-        dp=1, 
-        minDist=50, 
-        param1=50, 
-        param2=30, 
-        minRadius=20, 
+        blurred,
+        cv2.HOUGH_GRADIENT,
+        dp=1.2,
+        minDist=100,
+        param1=50,
+        param2=30,
+        minRadius=20,
         maxRadius=80
     )
 
     if circles is not None:
-        circles = np.uint16(np.around(circles))
-        hoop = circles[0][0]
-        return float(hoop[0]), float(hoop[1]), float(hoop[2])
+        circles = np.round(circles[0, :]).astype("int")
+        return float(circles[0][0]), float(circles[0][1]), float(circles[0][2])
     
-    # 2. Fallback: Contour thresholding & minimum enclosing circle
-    _, thresh = cv2.threshold(blur, 100, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    
-    for cnt in contours:
-        (x, y), radius = cv2.minEnclosingCircle(cnt)
-        if 20 < radius < 80:
-            return float(x), float(y), float(radius)
-
     return None, None, None
 
 
-def compute_homography_and_hoop_position(image_path, text_path):
+def compute_homography_and_find_centers(img):
     """
-    1. Loads the image and 4x4 matrix T (derived from joint angles q via forward kinematics).
-    2. Detects ArUco markers to compute planar homography (pixels <-> board plane at Z=70mm).
-    3. Finds the hoop center (u, v) in pixel space and transforms it to board coordinates.
-    4. Computes 3D hoop center in the robot base frame using matrix T and the 90-degree local offset.
+    Vypočítá homografii H z ArUco značek a převede detekovaný střed kruhu
+    z pixelů na 2D souřadnice desky v milimetrech.
     """
-    # Load image and Forward Kinematics Transformation Matrix T
-    img = cv2.imread(image_path)
-    if img is None:
-        raise FileNotFoundError(f"Could not load image at {image_path}")
-        
-    T_fk = np.loadtxt(text_path)  # 4x4 matrix computed from joint angles q
-
-    # Detect ArUco markers (DICT_4X4_50)
+    # 1. Detekce ArUco značek
     aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
     detector = cv2.aruco.ArucoDetector(aruco_dict)
-    
+
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
     corners, ids, _ = detector.detectMarkers(gray)
 
     if ids is None or len(ids) == 0:
-        print(f"[{image_path}] No ArUco markers detected.")
-        return
+        raise ValueError("V obrázku nebyly detekovány žádné ArUco značky.")
 
-    # ArUco board setup (coordinates in mm on the Z = 70 mm plane)
-    marker_size_mm = 40.0
-    marker_offsets = {1: (5.0, 5.0), 2: (80.0, 80.0)}
-    marker_square = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float32) * marker_size_mm
+    # 2. Lokální souřadnice rohů značek 40x40 mm na desce 125x125 mm
+    marker_square = np.array([
+        [0.0, 0.0],
+        [40.0, 0.0],
+        [40.0, 40.0],
+        [0.0, 40.0]
+    ], dtype=np.float32)
 
-    board_pts, img_pts = [], []
+    marker_offsets = {
+        1: (17.5, 17.5),
+        2: (80.0, 80.0)
+    }
+
+    world_pts = []
+    image_pts = []
+
     for i, marker_id in enumerate(ids.flatten()):
         if marker_id in marker_offsets:
             offset = np.array(marker_offsets[marker_id], dtype=np.float32)
-            board_pts.append(marker_square + offset)
-            img_pts.append(corners[i].reshape(4, 2))
+            pts_world = marker_square + offset
+            pts_img = corners[i].reshape(4, 2)
 
-    board_pts = np.vstack(board_pts).astype(np.float32)
-    img_pts = np.vstack(img_pts).astype(np.float32)
+            world_pts.append(pts_world)
+            image_pts.append(pts_img)
 
-    # Compute Homography: Board (mm) <-> Image (pixels)
-    H_board2img, _ = cv2.findHomography(board_pts, img_pts)
-    H_img2board = np.linalg.inv(H_board2img)
+    if not world_pts:
+        raise ValueError("Nebyly nalezeny požadované ArUco značky (ID 1 ani 2).")
 
-    # Detect Hoop Center in Image
-    u, v, r_px = detect_hoop_center(img)
-    if u is None:
-        print(f"[{image_path}] Hoop detection failed.")
-        return
+    world_pts = np.concatenate(world_pts, axis=0).astype(np.float32)
+    image_pts = np.concatenate(image_pts, axis=0).astype(np.float32)
 
-    print(f"\n--- Processing: {image_path} ---")
-    print(f"Detected Hoop Center (Image Pixels): u = {u:.1f} px, v = {v:.1f} px (r = {r_px:.1f} px)")
+    # 3. Výpočet homografie H a její inverze H_inv
+    H, _ = cv2.findHomography(world_pts, image_pts)
+    H_inv = np.linalg.inv(H)
 
-    # Convert Image Pixels -> Board Plane (mm)
-    pixel_vec = np.array([u, v, 1.0], dtype=np.float32)
-    board_vec = H_img2board @ pixel_vec
-    x_board_mm = board_vec[0] / board_vec[2]
-    y_board_mm = board_vec[1] / board_vec[2]
-    print(f"Hoop Center on Board Plane (at Z = 70 mm): X = {x_board_mm:.2f} mm, Y = {y_board_mm:.2f} mm")
+    # 4. Projekce středu desky (62.5, 62.5 mm) do pixelů
+    board_center_mm = np.array([62.5, 62.5, 1.0])
+    board_px_homog = H @ board_center_mm
+    board_pixel = board_px_homog[:2] / board_px_homog[2]
 
-    # 3D Kinematics Calculation
-    # Normalize T matrix units to mm if required
-    T_mm = T_fk.copy()
-    if np.max(np.abs(T_fk[:3, 3])) < 10.0:
-        T_mm[:3, 3] *= 1000.0
+    # 5. Detekce středu kruhu přímo z obrázku
+    hoop_u, hoop_v, hoop_radius = find_hoop_center_cv(img)
 
-    # Local offset: 135 mm along Y-axis (90 degrees to X-pointing gripper)
-    hoop_local_offset = np.array([0.0, 135.0, 0.0, 1.0])
-    hoop_center_robot_3d = T_mm @ hoop_local_offset
+    if hoop_u is not None:
+        hoop_pixel_homog = np.array([hoop_u, hoop_v, 1.0])
+        hoop_board_mm = H_inv @ hoop_pixel_homog
+        hoop_board_mm = hoop_board_mm[:2] / hoop_board_mm[2]
 
-    print(f"3D Hoop Center in Robot Base Frame:")
-    print(f"  X_base = {hoop_center_robot_3d[0]:.2f} mm")
-    print(f"  Y_base = {hoop_center_robot_3d[1]:.2f} mm")
-    print(f"  Z_base = {hoop_center_robot_3d[2]:.2f} mm")
+        print(f"Kruh detekován na pixelech: (u={hoop_u:.1f}, v={hoop_v:.1f})")
+        print(f"Pozice kruhu na desce: X={hoop_board_mm[0]:.1f} mm, Y={hoop_board_mm[1]:.1f} mm")
+        hoop_pixel = np.array([hoop_u, hoop_v])
+    else:
+        print("Varování: Kruh se nepodařilo v obrázku detekovat.")
+        hoop_pixel = None
+
+    return H, board_pixel, hoop_pixel, hoop_radius
 
 
-if __name__ == "__main__":
-    # Execute for saved photo & pose files
-    compute_homography_and_hoop_position('photos_hoop/hoop1.png', 'photos_hoop/hoop1.txt')
-    compute_homography_and_hoop_position('photos_hoop/hoop2.png', 'photos_hoop/hoop2.txt')
+# --- Hlavní kód bez bloku try ---
+
+# 1. Inicializace robota
+robot = Rv6s(debug=False)
+robot.initialize()
+
+# Pořízení snímku z kamery ze současné pozice
+img = robot.grab_image()
+
+# Ukončení připojení k robotu
+robot.stop_robot()
+robot.close_connection()
+
+if img is not None:
+    # 2. Vytvoření složky photos_homo a uložení originálního snímku
+    output_dir = "photos_homo"
+    os.makedirs(output_dir, exist_ok=True)
+
+    orig_path = os.path.join(output_dir, "original_image.png")
+    cv2.imwrite(orig_path, img)
+    print(f"Originální snímek byl uložen do: {orig_path}")
+
+    # 3. Výpočet homografie a nalezení středů
+    H, board_px, hoop_px, r = compute_homography_and_find_centers(img)
+
+    # 4. Vykreslení středů do snímku
+    img_annotated = img.copy()
+
+    # Zelený křížek = Střed základní desky
+    b_center = (int(round(board_px[0])), int(round(board_px[1])))
+    cv2.drawMarker(img_annotated, b_center, (0, 255, 0), cv2.MARKER_CROSS, 20, 2)
+    cv2.putText(img_annotated, "Base Center", (b_center[0] + 10, b_center[1] - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+    # Červený křížek + Kružnice = Detekovaný střed kruhu
+    if hoop_px is not None:
+        h_center = (int(round(hoop_px[0])), int(round(hoop_px[1])))
+        cv2.drawMarker(img_annotated, h_center, (0, 0, 255), cv2.MARKER_CROSS, 20, 2)
+        if r is not None:
+            cv2.circle(img_annotated, h_center, int(r), (0, 0, 255), 2)
+        cv2.putText(img_annotated, "Hoop Center", (h_center[0] + 10, h_center[1] - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
+    # Uložení označeného snímku
+    annotated_path = os.path.join(output_dir, "annotated_hoop_and_base.png")
+    cv2.imwrite(annotated_path, img_annotated)
+    print(f"Označený snímek byl uložen do: {annotated_path}")
+
+else:
+    print("Nepodařilo se získat snímek z kamery.")
