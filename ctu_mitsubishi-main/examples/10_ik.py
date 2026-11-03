@@ -7,9 +7,9 @@ robot.initialize()
 
 
 position = np.array(
-    [[1, 0, 0, 0.],
+    [[1, 0, 0, 0.4],
      [0, -1, 0, 0],
-     [0, 0, -1, 0.1],
+     [0, 0, -1, 0.40],
      [0, 0, 0, 1]])
 
 q0 = robot.get_q()
@@ -22,14 +22,14 @@ qnew = min(qs, key=lambda q: np.linalg.norm(q-q0))
 print("q new: ", end=" ")
 print(qnew)
 
-steps = 15
+steps = 5
 
 for i in range(steps):
     qmove = q0 - (q0-qnew)*(i/(steps-1))
     robot.move_to_q(qmove)
     robot.wait_for_motion_stop()
     sleep(0.2)
-    print("steps(" + str(i) + "/" + str(steps)+"), ", end = "")
+    print("steps(" + str(i+1) + "/" + str(steps)+"), ", end = "")
     print(qmove)
 
 robot.stop_robot()

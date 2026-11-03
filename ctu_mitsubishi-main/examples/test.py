@@ -8,7 +8,11 @@ robot.initialize()
 q = robot.get_q()
 print("Current q:", np.rad2deg(q).round())
 
-
+q[0] = np.deg2rad(5)
+q[1] = np.deg2rad(0)
+q[2] = np.deg2rad(90)
+q[3] = np.deg2rad(0)
+q[4] = np.deg2rad(90)
 q[5] = np.deg2rad(180)
 
 robot.move_to_q(q)
