@@ -9,10 +9,6 @@ robot.initialize()
 
 # Získání snímku z kamery
 
-q = robot.get_q()
-q[0] += np.deg2rad(5)
-robot.move_to_q(q)
-robot.wait_for_motion_stop()
 
 img = robot.grab_image()
 
@@ -29,7 +25,7 @@ if img is not None:
     os.makedirs('photos_hoops', exist_ok=True)
 
     # Uložení obrázku
-    success = cv2.imwrite('photos_hoops/hoop6.png', img)
+    success = cv2.imwrite('photos_hoops/test.png', img)
 
     if success:
         print("Obrázek byl úspěšně uložen.")
