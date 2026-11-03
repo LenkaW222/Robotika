@@ -2,6 +2,7 @@ from ctu_mitsubishi import Rv6s
 import cv2
 import os
 import numpy as np
+from time import sleep
 
 # Inicializace rozhraní robota
 robot = Rv6s(debug=False)
@@ -23,23 +24,23 @@ def move_bot(position):
     print("q new: ", end=" ")
     print(qnew)
 
-    steps = 1
+    steps = 2
 
     for i in range(steps):
         qmove = q0 - (q0-qnew)*(i/(steps-1))
         robot.move_to_q(qmove)
         robot.wait_for_motion_stop()
-        sleep(0.1)
+        sleep(0.05)
         print("steps(" + str(i) + "/" + str(steps)+"), ", end = "")
         print(qmove)
     print("moved", end = "\n\n")
 
 
 for i in range (10):
-    for j in range(5):
+    for j in range(4):
         position = np.array(
         [[1, 0, 0, 0.3 + i*0.04],
-        [0, -1, 0, -0.2+j*0.1],
+        [0, -1, 0, -0.25+j*0.1],
         [0, 0, -1, 0.1],
         [0, 0, 0, 1]])
 
@@ -51,8 +52,8 @@ for i in range (10):
 
             success = cv2.imwrite('photos_3_11_26/img'+str(i) + str(j) +'.png', img)
 
-            with open('photos_3_11_26/positions.txt', 'w') as f:
-            f.write(str(position))
+            with open('photos_3_11_26/positions'+str(i) + str(j) +'.txt', 'w') as f:
+                f.write(str(position))
 
         position = None
 
