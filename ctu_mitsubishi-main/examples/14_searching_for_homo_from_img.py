@@ -3,7 +3,8 @@ import numpy as np
 import cv2
 
 # Povolené indexy referenčních obrázků
-ALLOWED_INDICES = {"11", "31", "32", "63", "73"}
+ALLOWED_INDICES = {"01", "43", "42", "63", "71"}
+# ALLOWED_INDICES = {"11", "31", "32", "63", "73"}  # Tyhle img jsou lepší
 
 # ==========================================
 # 1. ČÁST: Detekce ArUco a výpočet středu base
