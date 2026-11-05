@@ -10,14 +10,13 @@ robot.initialize()
 
 # Matice homografie H (převod z pixelů [u, v] na reálné X, Y středu KRUHU v mm)
 H = np.array([
-    [ 6.47099257e-02, -7.23086873e-01,  8.54855848e+02],
-    [-6.74580805e-01,  1.21563085e-02,  4.40229368e+02],
-    [ 1.08987336e-04, -1.16147801e-04,  1.00000000e+00]
-])
+    [-0.000100, -0.261713, 842.805323],
+    [-0.267645, -0.000507, 422.676470],
+    [-0.000004, 0.000005, 1.000000]])
 
 Home_position = np.array(
     [[1,  0,  0, 0.4],
-     [0, -1,  0, 0.0],
+     [0, -1,  0, -0.3],
      [0,  0, -1, 0.4],
      [0,  0,  0, 1.0]]
 )
@@ -37,7 +36,7 @@ def move_bot(position):
     print("q new: ", end=" ")
     print(qnew)
 
-    steps = 5
+    steps = 2
 
     for i in range(steps):
         qmove = q0 - (q0-qnew)*(i/(steps-1))
@@ -50,6 +49,15 @@ def move_bot(position):
 
 def move_home():
     print("Stěhování do domovské polohy (Home)...")
+    q0 = robot.get_q()
+    T_current = robot.fk(q0)
+
+    if T_current[2, 3] < 0.32:
+        T_lift = T_current.copy()
+        T_lift [2, 3] = 0.32
+
+        move_bot(T_lift)
+
     move_bot(Home_position)
 
 def get_base_center_px(img):
@@ -95,7 +103,7 @@ def get_gripper_pose_for_circle_target(x_target_m, y_target_m, z_circle_target_m
     ])
     
     # Offset v lokalním souřadném systému gripperu (v metrech)
-    p_circle_gripper = np.array([0.135, 0.0, -0.030])
+    p_circle_gripper = np.array([0.135, 0.0, 0.030])
     
     # Přepočet offsetu do souřadného systému robota
     v_robot_offset = R_gripper @ p_circle_gripper  # Vychází [0.135, 0.0, 0.030]
@@ -135,9 +143,13 @@ if img is not None:
         
         print(f"Střed base v pixelech: {base_center_px}")
         print(f"Střed base v souřadnicích robota: X = {x_base_m:.4f} m, Y = {y_base_m:.4f} m")
+
+        # Čekání 2 sekundy
+        print("Čekání 5 sekund...")
+        sleep(5.0)
         
         # 4. Pohyb: Střed KRUHU na tyčce přesně nad střed desky do výšky Z = 30 cm (0.30 m)
-        z_target_1 = 0.30
+        z_target_1 = 0.32
         print(f"Pohyb středu KRUHU nad střed base do výšky Z = {z_target_1 * 100:.0f} cm X = {x_base_m}m a Y = {y_base_m}m.")
         
         # Čekání 2 sekundy
@@ -145,16 +157,28 @@ if img is not None:
         sleep(2.0)
         
         T_target_z30 = get_gripper_pose_for_circle_target(x_base_m, y_base_m, z_target_1)
+        print(T_target_z30)
         move_bot(T_target_z30)
         
         # Čekání 2 sekundy
         print("Čekání 2 sekundy...")
         sleep(2.0)
+
+        z_target_2 = 0.2
+        print(f"Klesání středu KRUHU nad střed base do výšky Z = {z_target_2 * 100:.0f} cm...")
+        T_target_z20 = get_gripper_pose_for_circle_target(x_base_m, y_base_m, z_target_2)
+        print(T_target_z20)
+        move_bot(T_target_z20)
+
+        # Čekání 2 sekundy
+        print("Čekání 2 sekundy...")
+        sleep(2.0)
         
         # 5. Pohyb: Střed KRUHU na tyčce klesne přesně nad střed desky do výšky Z = 14 cm (0.14 m)
-        z_target_2 = 0.14
-        print(f"Klesání středu KRUHU nad střed base do výšky Z = {z_target_2 * 100:.0f} cm...")
-        T_target_z14 = get_gripper_pose_for_circle_target(x_base_m, y_base_m, z_target_2)
+        z_target_3 = 0.095
+        print(f"Klesání středu KRUHU nad střed base do výšky Z = {z_target_3 * 100:.0f} cm...")
+        T_target_z14 = get_gripper_pose_for_circle_target(x_base_m, y_base_m, z_target_3)
+        print(T_target_z14)
         move_bot(T_target_z14)
 
 else:
