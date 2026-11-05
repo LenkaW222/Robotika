@@ -1,0 +1,20 @@
+Traceback (most recent call last):
+  File "/home/weisolen/robotika/Robotika/ctu_mitsubishi-main/examples/04_camera.py", line 8, in <module>
+    robot.initialize()
+  File "/usr/lib/python3.12/site-packages/ctu_mitsubishi/rv6s.py", line 92, in initialize
+    self.stop_robot()
+  File "/usr/lib/python3.12/site-packages/ctu_mitsubishi/rv6s.py", line 68, in stop_robot
+    self._send_and_receive("1;1;HOTMoveit.MB4;M1=0\r")
+  File "/usr/lib/python3.12/site-packages/ctu_mitsubishi/rv6s.py", line 78, in _send_and_receive
+    res = self._connection.readline().decode("utf-8")
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/site-packages/serial/serialposix.py", line 595, in read
+    raise SerialException(
+serial.serialutil.SerialException: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+Exception ignored in: <function Rv6s.__del__ at 0x7bda4ebbc860>
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/site-packages/ctu_mitsubishi/rv6s.py", line 42, in __del__
+  File "/usr/lib/python3.12/site-packages/ctu_mitsubishi/rv6s.py", line 68, in stop_robot
+  File "/usr/lib/python3.12/site-packages/ctu_mitsubishi/rv6s.py", line 78, in _send_and_receive
+  File "/usr/lib/python3.12/site-packages/serial/serialposix.py", line 595, in read
+serial.serialutil.SerialException: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
