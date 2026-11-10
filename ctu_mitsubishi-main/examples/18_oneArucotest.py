@@ -236,4 +236,8 @@ else:
 
 # Ukončení připojení
 robot.stop_robot()
+<<<<<<< HEAD
 robot.close_connection()
+=======
+robot.close_connection()
+>>>>>>> 374eae0d5322ab2c08059f1bc8db30e4f19a94f8

@@ -17,4 +17,8 @@ Traceback (most recent call last):
   File "/usr/lib/python3.12/site-packages/ctu_mitsubishi/rv6s.py", line 68, in stop_robot
   File "/usr/lib/python3.12/site-packages/ctu_mitsubishi/rv6s.py", line 78, in _send_and_receive
   File "/usr/lib/python3.12/site-packages/serial/serialposix.py", line 595, in read
+<<<<<<< HEAD
 serial.serialutil.SerialException: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+=======
+serial.serialutil.SerialException: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+>>>>>>> 374eae0d5322ab2c08059f1bc8db30e4f19a94f8
