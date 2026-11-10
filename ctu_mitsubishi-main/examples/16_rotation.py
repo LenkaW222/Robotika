@@ -8,9 +8,35 @@ from time import sleep, time
 # POMOCNÉ FUNKCE PRO DETEKCI A GEOMETRII
 # ==========================================
 
-def get_base_center_px(img):
+# def get_base_center_px(img):
+#     """
+#     Detekuje ArUco značky ID1 a ID2 a spočítá jejich střed v pixelech.
+#     """
+#     aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+#     detector = cv2.aruco.ArucoDetector(aruco_dict)
+    
+#     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+#     corners, ids, _ = detector.detectMarkers(gray)
+    
+#     centers = {}
+#     if ids is not None:
+#         for idx, marker_id in enumerate(ids.flatten()):
+#             c = corners[idx].reshape(4, 2)
+#             centers[marker_id] = np.mean(c, axis=0)
+            
+#     if 1 in centers and 2 in centers:
+#         return (centers[1] + centers[2]) / 2.0
+#     return None
+
+
+def get_base_center_robust(img):
     """
-    Detekuje ArUco značky ID1 a ID2 a spočítá jejich střed v pixelech.
+    Detekuje ArUco značky v obraze:
+    1. Pokud vidí obě (ID1 i ID2), spočítá střed jako jejich geometrický průměr.
+    2. Pokud vidí pouze jednu (ID1 nebo ID2), dopočítá střed base z orientace rohu 
+       a offsetu 37.5 mm z výkresu.
+    
+    Vrací: (base_center_px, detected_markers_dict)
     """
     aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
     detector = cv2.aruco.ArucoDetector(aruco_dict)
@@ -18,15 +44,57 @@ def get_base_center_px(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
     corners, ids, _ = detector.detectMarkers(gray)
     
-    centers = {}
-    if ids is not None:
-        for idx, marker_id in enumerate(ids.flatten()):
-            c = corners[idx].reshape(4, 2)
-            centers[marker_id] = np.mean(c, axis=0)
+    if ids is None:
+        print("Chyba: Nebyla detekována žádná ArUco značka.")
+        return None, {}
+        
+    ids_flat = ids.flatten()
+    markers = {}
+    
+    for idx, marker_id in enumerate(ids_flat):
+        pts = corners[idx].reshape(4, 2)
+        markers[marker_id] = pts
+
+    base_center_px = None
+
+    # PŘÍPAD A: Detekovány obě značky (ID1 i ID2)
+    if 1 in markers and 2 in markers:
+        c1 = np.mean(markers[1], axis=0)
+        c2 = np.mean(markers[2], axis=0)
+        base_center_px = (c1 + c2) / 2.0
+        print("Střed base vypočítán z obou ArUco značek (ID1 i ID2).")
+        
+    # PŘÍPAD B: Detekována pouze jedna značka (ID1 nebo ID2)
+    else:
+        target_id = 1 if 1 in markers else (2 if 2 in markers else None)
+        
+        if target_id is not None:
+            pts = markers[target_id]
+            c_marker = np.mean(pts, axis=0)
             
-    if 1 in centers and 2 in centers:
-        return (centers[1] + centers[2]) / 2.0
-    return None
+            # Vektory orientace stran značky
+            u_vec = pts[1] - pts[0]  # Osa X značky
+            v_vec = pts[3] - pts[0]  # Osa Y značky
+            
+            side_length_px = (np.linalg.norm(u_vec) + np.linalg.norm(v_vec)) / 2.0
+            u_hat = u_vec / np.linalg.norm(u_vec)
+            v_hat = v_vec / np.linalg.norm(v_vec)
+            
+            # Offset středu base od středu značky: (37.5 mm / 40.0 mm) * délka strany v px
+            offset_factor = 37.5 / 40.0
+            
+            if target_id == 1:
+                # ID1 (vlevo nahoře): střed base leží vpravo (+X) a dolů (+Y)
+                offset_vector_px = (u_hat * offset_factor * side_length_px) + (v_hat * offset_factor * side_length_px)
+            else:
+                # ID2 (vpravo dole): střed base leží vlevo (-X) a nahoru (-Y)
+                offset_vector_px = (-u_hat * offset_factor * side_length_px) + (-v_hat * offset_factor * side_length_px)
+                
+            base_center_px = c_marker + offset_vector_px
+            print(f"Střed base dopočten z jediné ArUco značky ID{target_id}.")
+
+    return base_center_px
+
 
 def fit_circle_least_squares(points):
     """
@@ -96,7 +164,7 @@ if __name__ == "__main__":
     base_centers_px = []
     timestamps = []
 
-    total_duration = 15.0  # Snos 15 sekund pro bezpečné pokrytí 1 celé rotace (13s)
+    total_duration = 20 # Snos 15 sekund pro bezpečné pokrytí 1 celé rotace (13s)
     interval = 1.0        # Snímání každou 1 sekundu
 
     print(f"Začíná snímání rotačního stolku po dobu {total_duration}s...")
@@ -114,7 +182,7 @@ if __name__ == "__main__":
             
             img = robot.grab_image()
             if img is not None:
-                center_px = get_base_center_px(img)
+                center_px = get_base_center_robust(img)
                 
                 if center_px is not None:
                     base_centers_px.append(center_px)
