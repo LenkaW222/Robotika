@@ -20,8 +20,8 @@ Home_position = np.array([
     [0,  0,  0,  1.0]
 ])
 
-# Predikční prodleva robota nastavená přesně na 2.2 sekundy
-ROBOT_DELAY = 2.5
+# Predikční prodleva robota (2.2 sekundy)
+ROBOT_DELAY = 2.2
 
 # ==========================================
 # POMOCNÉ FUNKCE
@@ -37,7 +37,7 @@ def transform_pixel_to_robot(point_pixel, H_mat):
 def move_bot(robot, position):
     """
     Provede inverzní kinematiku.
-    Vrací True při úspěchu, False při selhání IK (bez pádu programu).
+    Vrací True při úspěchu, False při selhání IK.
     """
     if position is None:
         return False
@@ -87,7 +87,7 @@ def get_gripper_pose_for_circle_target(x_target_m, y_target_m, z_target_m):
     return T_gripper
 
 def get_base_info_px(img):
-    """Vrátí střed base v px a směrový vektor 'UP' desky v PIXELECH."""
+    """Vrátí střed base v px a směrový vektor desky v PIXELECH."""
     aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
     detector = cv2.aruco.ArucoDetector(aruco_dict)
     
@@ -128,7 +128,7 @@ def get_base_info_px(img):
     return base_center_px, dir_up_px
 
 def fit_circle_least_squares(points):
-    """Proloží body v px nejlepší kružnicí."""
+    """Proloží body v px nejlepší kružnicí pro určení středu otáčení."""
     pts = np.array(points)
     x, y = pts[:, 0], pts[:, 1]
     A = np.column_stack([x, y, np.ones_like(x)])
@@ -139,7 +139,7 @@ def fit_circle_least_squares(points):
     return np.array([xc, yc]), radius
 
 def calculate_rotation(points, timestamps, center_pt):
-    """Spočítá úhlovou rychlost w (rad/s) rotace desky."""
+    """Spočítá úhlovou rychlost w (rad/s), periodu a rychlost (°/s)."""
     pts = np.array(points)
     xc, yc = center_pt
     angles = np.arctan2(pts[:, 1] - yc, pts[:, 0] - xc)
@@ -161,7 +161,7 @@ if __name__ == "__main__":
     robot = Rv6s(debug=False)
     robot.initialize()
 
-    # KROK 1: HOME POSITION
+    # 1. HOME POSITION
     if not move_home(robot):
         print("Chyba při startu do Home position. Ukončuji program.")
         robot.stop_robot()
@@ -171,7 +171,7 @@ if __name__ == "__main__":
     output_dir = "annotated_frames"
     os.makedirs(output_dir, exist_ok=True)
 
-    # KROK 2: SNÍMÁNÍ 20 SEKUND A VYKRESLENÍ ÚDAJŮ
+    # 2. SNÍMÁNÍ PO DOBU 20 SEKUND (Vypsání parametrů + uložení označených snímků)
     base_centers_px = []
     timestamps = []
     dir_up_px_list = []
@@ -192,7 +192,7 @@ if __name__ == "__main__":
             if img is not None:
                 c_px, d_up_px = get_base_info_px(img)
                 if c_px is not None and d_up_px is not None:
-                    d_up_px *= -1  # Otočení směru k tyči
+                    d_up_px *= -1  # Násobení -1 směřuje šipku správně k tyči
                     base_centers_px.append(c_px)
                     timestamps.append(curr_t)
                     dir_up_px_list.append(d_up_px)
@@ -221,7 +221,7 @@ if __name__ == "__main__":
         robot.close_connection()
         exit()
 
-    # Vyhodnocení rotace stolku a přepočty na cm
+    # Vyhodnocení geometrie rotace a výpis výsledků v cm
     rot_center_px, radius_px = fit_circle_least_squares(base_centers_px)
     w_rad_s, speed_deg_s, period_s = calculate_rotation(base_centers_px, timestamps, rot_center_px)
     rot_center_mm = transform_pixel_to_robot(rot_center_px, H)
@@ -241,7 +241,7 @@ if __name__ == "__main__":
     print(f" Pozice středu otáčení (robot): X = {rot_center_cm[0]:.2f} cm, Y = {rot_center_cm[1]:.2f} cm")
     print("="*50 + "\n")
 
-    # KROK 3: ZAPSÁNÍ POČÁTEČNÍHO ČASU t0 A POHYB NAD STŘED ROTACE
+    # 3. ZAPSÁNÍ POČÁTEČNÍHO ČASU t0 A POHYB NAD STŘED ROTACE
     print("--- [KROK 3] Zapsání času t0 a přesun NAD STŘED ROTACE (Z = 32 cm) ---")
     t0 = time()
     
@@ -254,7 +254,7 @@ if __name__ == "__main__":
         robot.close_connection()
         exit()
 
-    # PREDIKČNÍ MODELY
+    # FUNKCE PREDIKCE
     dt_last = (t0 - t_start_scan) - timestamps[-1]
 
     last_c_px = base_centers_px[-1]
@@ -265,7 +265,7 @@ if __name__ == "__main__":
     angle_up_offset = np.arctan2(last_dir_up_px[1], last_dir_up_px[0]) - angle_base_last
 
     def get_predicted_start_path_m(dt_seconds):
-        """Spočítá pozici začátku tyče (+7 cm) v metrech v čase t0 + dt_seconds s predikcí 2.2s."""
+        """Spočítá pozici začátku tyče (+7 cm od středu) v metrech v čase t0 + dt_seconds."""
         d_theta = w_rad_s * dt_seconds
         angle_future = angle_base_t0 + d_theta
         
@@ -282,57 +282,51 @@ if __name__ == "__main__":
         return start_path_mm / 1000.0
 
     def get_predicted_base_center_m(dt_seconds):
-        """Spočítá pozici středu desky (base) v metrech v čase t0 + dt_seconds s predikcí 2.2s."""
+        """Spočítá pozici středu desky (base) v metrech v čase t0 + dt_seconds."""
         d_theta = w_rad_s * dt_seconds
         angle_future = angle_base_t0 + d_theta
         base_future_px = rot_center_px + radius_px * np.array([np.cos(angle_future), np.sin(angle_future)])
         base_future_mm = transform_pixel_to_robot(base_future_px, H)
         return base_future_mm / 1000.0
 
-    # KROK 4: POHYB NAD ZAČÁTEK TYČE v t0 + 10s NA Z = 32 cm (PREDIKCE 2.2s)
-    print("--- [KROK 4] Přesun NAD ZAČÁTEK TYČE v t0 + 10s (Z = 32 cm) s predikcí 2.2s ---")
-    
-    t_target_krok4 = 10.0 + ROBOT_DELAY
-    pos_krok4_m = get_predicted_start_path_m(t_target_krok4)
+    # 4. POHYB NAD ZAČÁTEK TYČE (Z = 32 cm) — IHNED BEZ ČEKÁNÍ
+    print(f"--- [KROK 4] Přesun NAD ZAČÁTEK TYČE (Z = 32 cm) ---")
+    dt_now = (time() - t0) + ROBOT_DELAY
+    pos_krok4_m = get_predicted_start_path_m(dt_now)
     T_start_z32 = get_gripper_pose_for_circle_target(pos_krok4_m[0], pos_krok4_m[1], 0.32)
 
-    time_to_wait = 10.0 - ROBOT_DELAY - (time() - t0)
-    if time_to_wait > 0:
-        sleep(time_to_wait)
-        
     if not move_bot(robot, T_start_z32):
-        print("Pohyb v KROKU 4 selhal na IK. Přeskakuji na další krok...")
+        print("Pohyb v KROKU 4 selhal na IK. Přeskakuji...")
 
-    # KROK 5: POHYB NA Z = 22 cm NAD ZAČÁTEK TYČE v t0 + 12s (PREDIKCE 2.2s)
-    print("--- [KROK 5] Klesání NAD ZAČÁTEK TYČE v t0 + 12s (Z = 22 cm) s predikcí 2.2s ---")
-    
-    t_target_krok5 = 12.0 + ROBOT_DELAY
-    pos_krok5_m = get_predicted_start_path_m(t_target_krok5)
+    # 5. POHYB NAD ZAČÁTEK TYČE (Z = 22 cm) — IHNED PO DOJEZDU KROKU 4
+    print(f"--- [KROK 5] Klesání NAD ZAČÁTEK TYČE (Z = 22 cm) ---")
+    dt_now = (time() - t0) + ROBOT_DELAY
+    pos_krok5_m = get_predicted_start_path_m(dt_now)
     T_start_z22 = get_gripper_pose_for_circle_target(pos_krok5_m[0], pos_krok5_m[1], 0.22)
 
-    time_to_wait = 12.0 - ROBOT_DELAY - (time() - t0)
-    if time_to_wait > 0:
-        sleep(time_to_wait)
-        
     if not move_bot(robot, T_start_z22):
-        print("Pohyb v KROKU 5 selhal na IK. Přeskakuji na další krok...")
+        print("Pohyb v KROKU 5 selhal na IK. Přeskakuji...")
 
-    # KROK 6: POHYB NAD STŘED BASE v t0 + 15s NA Z = 15 cm (PREDIKCE 2.2s)
-    print("--- [KROK 6] Přesun NAD STŘED BASE v t0 + 15s (Z = 15 cm) s predikcí 2.2s ---")
-    
-    t_target_krok6 = 15.0 + ROBOT_DELAY
-    pos_krok6_m = get_predicted_base_center_m(t_target_krok6)
+    # 6. POHYB NAD STŘED BASE (Z = 15 cm) — IHNED PO DOJEZDU KROKU 5
+    print(f"--- [KROK 6] Přesun NAD STŘED BASE (Z = 15 cm) ---")
+    dt_now = (time() - t0) + ROBOT_DELAY
+    pos_krok6_m = get_predicted_base_center_m(dt_now)
     T_base_z15 = get_gripper_pose_for_circle_target(pos_krok6_m[0], pos_krok6_m[1], 0.15)
 
-    time_to_wait = 15.0 - ROBOT_DELAY - (time() - t0)
-    if time_to_wait > 0:
-        sleep(time_to_wait)
-
     if not move_bot(robot, T_base_z15):
-        print("Pohyb v KROKU 6 selhal na IK!")
+        print("Pohyb v KROKU 6 selhal na IK. Přeskakuji...")
+
+    # 7. POHYB NAD STŘED BASE (Z = 10 cm / 0.1 m) — IHNED PO DOJEZDU KROKU 6
+    print(f"--- [KROK 7] Klesání NAD STŘED BASE (Z = 10 cm / 0.1 m) ---")
+    dt_now = (time() - t0) + ROBOT_DELAY
+    pos_krok7_m = get_predicted_base_center_m(dt_now)
+    T_base_z10 = get_gripper_pose_for_circle_target(pos_krok7_m[0], pos_krok7_m[1], 0.10)
+
+    if not move_bot(robot, T_base_z10):
+        print("Pohyb v KROKU 7 selhal na IK!")
 
     print("\nVšechny pohyby byly úspěšně dokončeny.")
 
-    # Ukončení robota
+    # Ukončení připojení k robotovi
     robot.stop_robot()
     robot.close_connection()
