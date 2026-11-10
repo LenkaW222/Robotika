@@ -21,7 +21,7 @@ Home_position = np.array([
 ])
 
 # Predikční prodleva robota nastavená přesně na 2.2 sekundy
-ROBOT_DELAY = 2.2
+ROBOT_DELAY = 2.5
 
 # ==========================================
 # POMOCNÉ FUNKCE

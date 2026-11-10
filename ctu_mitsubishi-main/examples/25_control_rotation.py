@@ -20,7 +20,7 @@ Home_position = np.array([
     [0,  0,  0,  1.0]
 ])
 
-ROBOT_DELAY = 2.2
+ROBOT_DELAY = 2.5
 
 # ==========================================
 # POMOCNÉ FUNKCE
