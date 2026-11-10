@@ -19,7 +19,7 @@ Home_position = np.array([
     [0,  0,  0,  1.0]
 ])
 
-# Zvětšená predikční prodleva robota na 3.0 sekundy
+# Predikční prodleva robota na 3.0 sekundy
 ROBOT_DELAY = 3.0
 
 # ==========================================
@@ -36,7 +36,7 @@ def transform_pixel_to_robot(point_pixel, H_mat):
 def move_bot(robot, position):
     """
     Provede inverzní kinematiku. 
-    Vrací True při úspěchu, False pokud IK selže (bez chybového výstupu min()).
+    Vrací True při úspěchu, False pokud IK selže.
     """
     if position is None:
         return False
@@ -44,7 +44,6 @@ def move_bot(robot, position):
     q0 = robot.get_q()
     qs = robot.ik(position)
     
-    # Bezpečnostní kontrola na prázdný seznam z IK
     if qs is None or len(qs) == 0:
         print(f"[CHYBA IK] Pro cílovou pozici X={position[0,3]:.3f}m, Y={position[1,3]:.3f}m, Z={position[2,3]:.3f}m neexistuje platné řešení IK!")
         return False
@@ -181,7 +180,8 @@ if __name__ == "__main__":
     # KROK 2: Snímání po dobu 20 s[cite: 3]
     base_centers_px = []
     timestamps = []
-    start_path_pts_mm = []  # Souřadnice bodu (+7cm) v prostoru robota
+    base_center_pts_mm = []  # PŘIDÁNO: Souřadnice středu base v mm robota
+    start_path_pts_mm = []   # Souřadnice bodu (+7cm) v prostoru robota
     
     total_duration = 20.0
     interval = 1.0
@@ -201,9 +201,10 @@ if __name__ == "__main__":
                     base_centers_px.append(c_px)
                     timestamps.append(curr_t)
                     
-                    # Výpočet přesného bodu +7 cm nahoru v prostoru robota[cite: 5]
                     c_mm = transform_pixel_to_robot(c_px, H)
-                    start_path_mm = c_mm + d_up * 70.0  # +70 mm
+                    base_center_pts_mm.append(c_mm)  # Uložení středu desky
+                    
+                    start_path_mm = c_mm + d_up * 70.0  # +70 mm[cite: 5]
                     start_path_pts_mm.append(start_path_mm)
                     
                     print(f"[{curr_t:.1f}s] Střed base px: [{c_px[0]:.1f}, {c_px[1]:.1f}]")
@@ -233,22 +234,32 @@ if __name__ == "__main__":
         robot.close_connection()
         exit()
 
-    # PREDIKČNÍ MODEL Z PRVNÍ FÁZE:
-    # Určíme poloměr a počáteční úhel rotace bodu začátku tyče (+7 cm)
+    # PREDIKČNÍ MODELY Z PRVNÍ FÁZE:
+    dt_last = (t0 - t_start_scan) - timestamps[-1]
+
+    # Model A: ZAČÁTEK TYČE (+7 cm)
     last_start_path_mm = start_path_pts_mm[-1]
     vec_start_from_rot_mm = last_start_path_mm - rot_center_mm
-    
     radius_start_mm = np.linalg.norm(vec_start_from_rot_mm)
-    angle_start_last = np.arctan2(vec_start_from_rot_mm[1], vec_start_from_rot_mm[0])
-    
-    dt_last = (t0 - t_start_scan) - timestamps[-1]
-    angle_start_t0 = angle_start_last + w_rad_s * dt_last
+    angle_start_t0 = np.arctan2(vec_start_from_rot_mm[1], vec_start_from_rot_mm[0]) + w_rad_s * dt_last
 
     def get_predicted_start_path_m(dt_seconds):
         """Spočítá přesnou pozici začátku tyče (+7 cm od středu) v čase t0 + dt_seconds."""
         angle_future = angle_start_t0 + w_rad_s * dt_seconds
         start_future_mm = rot_center_mm + radius_start_mm * np.array([np.cos(angle_future), np.sin(angle_future)])
         return start_future_mm / 1000.0
+
+    # Model B: STŘED BASE (PŘIDÁNO)
+    last_base_center_mm = base_center_pts_mm[-1]
+    vec_base_from_rot_mm = last_base_center_mm - rot_center_mm
+    radius_base_mm = np.linalg.norm(vec_base_from_rot_mm)
+    angle_base_t0 = np.arctan2(vec_base_from_rot_mm[1], vec_base_from_rot_mm[0]) + w_rad_s * dt_last
+
+    def get_predicted_base_center_m(dt_seconds):
+        """Spočítá přesnou pozici středu desky (base) v čase t0 + dt_seconds."""
+        angle_future = angle_base_t0 + w_rad_s * dt_seconds
+        base_future_mm = rot_center_mm + radius_base_mm * np.array([np.cos(angle_future), np.sin(angle_future)])
+        return base_future_mm / 1000.0
 
     # KROK 4: Pohyb nad začátek cesty v čase t0 + 10s (s predikcí 3s) na Z = 32 cm
     print("--- [KROK 4] Přesun NAD ZAČÁTEK CESTY v t0 + 10s (Z = 32 cm) ---")
@@ -280,6 +291,23 @@ if __name__ == "__main__":
         
     if not move_bot(robot, T_start_z22):
         print("Pohyb v KROKU 5 selhal na IK. Ruším všechny další pohyby!")
+        robot.stop_robot()
+        robot.close_connection()
+        exit()
+
+    # KROK 6 (PŘIDÁNO): Pohyb nad predikovaný střed base v čase t0 + 15s na Z = 15 cm
+    print("--- [KROK 6] Přesun NAD STŘED BASE v t0 + 15s (Z = 15 cm) ---")
+    
+    t_target_krok6 = 15.0 + ROBOT_DELAY
+    pos_krok6_m = get_predicted_base_center_m(t_target_krok6)
+    T_base_z15 = get_gripper_pose_for_circle_target(pos_krok6_m[0], pos_krok6_m[1], 0.15)
+
+    time_to_wait = 15.0 - ROBOT_DELAY - (time() - t0)
+    if time_to_wait > 0:
+        sleep(time_to_wait)
+
+    if not move_bot(robot, T_base_z15):
+        print("Pohyb v KROKU 6 selhal na IK. Ruším všechny další pohyby!")
         robot.stop_robot()
         robot.close_connection()
         exit()
