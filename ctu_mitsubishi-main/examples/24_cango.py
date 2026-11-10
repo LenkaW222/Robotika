@@ -6,14 +6,21 @@
 #
 import numpy as np
 from ctu_mitsubishi import Rv6s
+from time import time
 
 robot = Rv6s(debug=False)
 robot.initialize()
 
-for i in range(20):
-    q = robot.get_q()
-    q[0] += np.deg2rad(3)
+q = robot.get_q()
+
+for i in range(2):
+    pred = time()
+
+
+    q[0] += np.deg2rad(-50)
     robot.move_to_q(q)
+    po = time()
+    print(po - pred)
 print(q)
 # for i in range(6):
 #     q[i] += np.deg2rad(10)
