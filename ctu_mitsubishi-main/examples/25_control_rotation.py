@@ -20,7 +20,7 @@ Home_position = np.array([
     [0,  0,  0,  1.0]
 ])
 
-ROBOT_DELAY = 2.5
+ROBOT_DELAY = 2.2
 
 # ==========================================
 # POMOCNÉ FUNKCE
@@ -251,13 +251,13 @@ if __name__ == "__main__":
 
     # 3. KONTROLNÍ TEST: SLEDOVÁNÍ V Z = 32 cm BEZ PRERUŠENÍ PŘI CHYBĚ IK
     print("\n--- Spouštím sledování začátku tyče v Z = 32 cm ---")
-    tracking_duration = 30.0
+    tracking_duration = 15
     t_track_start = time()
 
     while (time() - t_track_start) < tracking_duration:
         dt_target = (time() - t0) + ROBOT_DELAY
-        pos_target_m = get_predicted_start_path_m(dt_target)
-        T_target_z32 = get_gripper_pose_for_circle_target(pos_target_m[0], pos_target_m[1], 0.32)
+        pos_target_m = get_predicted_start_path_m(dt_target+0.9)
+        T_target_z32 = get_gripper_pose_for_circle_target(pos_target_m[0], pos_target_m[1], 0.29)
 
         # Pokud vrátil False (chyba IK), NEPOKRAČUJE BREAKEM, ale prostě zkusí další bod
         if not move_bot(robot, T_target_z32):
