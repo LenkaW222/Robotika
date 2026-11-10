@@ -1,3 +1,4 @@
+from ctu_mitsubishi import Rv6s
 import cv2
 import os
 import numpy as np
@@ -5,7 +6,7 @@ import numpy as np
 
 # Pokus o vytvoreni erarnich funkci-> zatim nefunguje, protoze se pouziva classa robota, ktera zde neni definovana
 
-
+robot = Rv6s(debug=False)
 
 def move_home():
     print("Stěhování do domovské polohy (Home)...")
