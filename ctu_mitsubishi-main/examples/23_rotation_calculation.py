@@ -20,7 +20,7 @@ Home_position = np.array([
 ])
 
 # Predikční prodleva robota na 3.0 sekundy
-ROBOT_DELAY = 3.0
+ROBOT_DELAY = 2.5
 
 # ==========================================
 # POMOCNÉ FUNKCE
@@ -281,11 +281,11 @@ if __name__ == "__main__":
     # KROK 5: Klesání na Z = 22 cm v čase t0 + 12s (s predikcí 3s)
     print("--- [KROK 5] Klesání na Z = 22 cm v t0 + 12s ---")
     
-    t_target_krok5 = 12.0 + ROBOT_DELAY
+    t_target_krok5 = 5.0 + ROBOT_DELAY
     pos_krok5_m = get_predicted_start_path_m(t_target_krok5)
     T_start_z22 = get_gripper_pose_for_circle_target(pos_krok5_m[0], pos_krok5_m[1], 0.22)
 
-    time_to_wait = 12.0 - ROBOT_DELAY - (time() - t0)
+    time_to_wait = 5.0 - ROBOT_DELAY - (time() - t0)
     if time_to_wait > 0:
         sleep(time_to_wait)
         
@@ -298,11 +298,11 @@ if __name__ == "__main__":
     # KROK 6 (PŘIDÁNO): Pohyb nad predikovaný střed base v čase t0 + 15s na Z = 15 cm
     print("--- [KROK 6] Přesun NAD STŘED BASE v t0 + 15s (Z = 15 cm) ---")
     
-    t_target_krok6 = 15.0 + ROBOT_DELAY
+    t_target_krok6 = 10.0 + ROBOT_DELAY
     pos_krok6_m = get_predicted_base_center_m(t_target_krok6)
     T_base_z15 = get_gripper_pose_for_circle_target(pos_krok6_m[0], pos_krok6_m[1], 0.15)
 
-    time_to_wait = 15.0 - ROBOT_DELAY - (time() - t0)
+    time_to_wait = 10.0 - ROBOT_DELAY - (time() - t0)
     if time_to_wait > 0:
         sleep(time_to_wait)
 

@@ -189,6 +189,7 @@ if __name__ == "__main__":
             img = robot.grab_image()
             if img is not None:
                 c_px, d_up_px = get_base_info_px(img)
+                d_up_px *= -1
                 if c_px is not None and d_up_px is not None:
                     base_centers_px.append(c_px)
                     timestamps.append(curr_t)

@@ -2,7 +2,7 @@ from ctu_mitsubishi import Rv6s
 import cv2
 import os
 import numpy as np
-from time import sleep
+import time
 import actions
 
 # Matice homografie H (převod z pixelů [u, v] na reálné X, Y středu v mm)
@@ -185,7 +185,7 @@ robot = Rv6s(debug=False)
 robot.initialize()
 
 move_home()
-sleep(0.5)
+time.sleep(0.5)
 
 img = robot.grab_image()
 
@@ -245,8 +245,11 @@ if img is not None:
         Qplan = plan_motion(T, robot.get_q())
 
         for i in range(len(Qplan)):
+            pred = time.time()
             robot.move_to_q(Qplan[i])
             robot.wait_for_motion_stop(poll_interval=0.01)
+            po = time.time()
+            print(po - pred)
 
 
 else:
