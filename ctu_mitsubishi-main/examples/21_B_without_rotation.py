@@ -46,16 +46,26 @@ def move_bot(position):
     print("q new: ", end=" ")
     print(qnew)
 
-    steps = 2
+    qmove = qnew
+    robot.move_to_q(qmove)
+    robot.wait_for_motion_stop(poll_interval=0.01)
+    #sleep(0.05)
+    #print("steps(" + str(i) + "/" + str(steps)+"), ", end="")
+    print(qmove)
 
-    for i in range(steps):
-        qmove = q0 - (q0-qnew)*(i/(steps-1))
-        robot.move_to_q(qmove)
-        robot.wait_for_motion_stop()
-        sleep(0.05)
-        print("steps(" + str(i) + "/" + str(steps)+"), ", end="")
-        print(qmove)
-    print("moved", end="\n\n")
+def plan_motion(T, q0):
+    Qplan = []
+    qold = q0
+    for i in range(len(T)):
+        qs = robot.ik(T[i])
+        qnew = min(qs, key=lambda q: np.linalg.norm(q-qold))
+
+        qold = qnew
+        Qplan.append(qold)
+
+    return Qplan
+
+
 
 
 def transform_pixel_to_robot(point_pixel, H_mat):
@@ -166,7 +176,8 @@ def get_base_info(img):
         vec_up_right = p_tr_mm - p_br_mm
         vec_up = (vec_up_left + vec_up_right) / 2.0
         
-        dir_up_robot = vec_up / np.linalg.norm(vec_up)
+        dir_up_robot = vec_up / -np.linalg.norm(vec_up)
+
 
     return base_center_px, dir_up_robot
 
@@ -199,35 +210,44 @@ if img is not None:
         z1 = 0.32
         print(f"[PLÁN 1/5] Přesun NAD STŘED BASE | Cílová pozice: X = {x_base_m * 100:.2f} cm, Y = {y_base_m * 100:.2f} cm, Z = {z1 * 100:.2f} cm")
         T1 = get_gripper_pose_for_circle_target(x_base_m, y_base_m, z1)
-        move_bot(T1)
-        sleep(2.0)
+        #move_bot(T1)
+        #sleep(2.0)
 
         # --- KROK 2: Přesun nad začátek nové tyče v z = 32 cm ---
         print(f"[PLÁN 2/5] Přesun NAD ZAČÁTEK OBRAZCE (+7 cm) | Cílová pozice: X = {x_shift_m * 100:.2f} cm, Y = {y_shift_m * 100:.2f} cm, Z = {z1 * 100:.2f} cm")
         T2 = get_gripper_pose_for_circle_target(x_shift_m, y_shift_m, z1)
-        move_bot(T2)
-        sleep(2.0)
+        #move_bot(T2)
+        #sleep(2.0)
 
         # --- KROK 3: Klesání nad začátkem nové tyče na z = 25 cm ---
-        z3 = 0.25
+        z3 = 0.22
         print(f"[PLÁN 3/5] Klesání NAD ZAČÁTKEM OBRAZCE | Cílová pozice: X = {x_shift_m * 100:.2f} cm, Y = {y_shift_m * 100:.2f} cm, Z = {z3 * 100:.2f} cm")
         T3 = get_gripper_pose_for_circle_target(x_shift_m, y_shift_m, z3)
         #move_bot(T3)
-        sleep(2.0)
+        #sleep(2.0)
 
         # --- KROK 4: Přesun nad střed base a z = 18 cm ---
-        z4 = 0.18
+        z4 = 0.15
         print(f"[PLÁN 4/5] Přesun NAD STŘED BASE | Cílová pozice: X = {x_base_m * 100:.2f} cm, Y = {y_base_m * 100:.2f} cm, Z = {z4 * 100:.2f} cm")
         T4 = get_gripper_pose_for_circle_target(x_base_m, y_base_m, z4)
         #move_bot(T4)
-        sleep(2.0)
+        #sleep(2.0)
 
         # --- KROK 5: Klesání nad středem base na z = 10 cm ---
-        z5 = 0.10
+        z5 = 0.1
         print(f"[PLÁN 5/5] Klesání NAD STŘEDEM BASE | Cílová pozice: X = {x_base_m * 100:.2f} cm, Y = {y_base_m * 100:.2f} cm, Z = {z5 * 100:.2f} cm")
         T5 = get_gripper_pose_for_circle_target(x_base_m, y_base_m, z5)
         #move_bot(T5)
-        sleep(2.0)
+        #sleep(2.0)
+        T = [T1, T2, T3, T4, T5]
+
+
+        Qplan = plan_motion(T, robot.get_q())
+
+        for i in range(len(Qplan)):
+            robot.move_to_q(Qplan[i])
+            robot.wait_for_motion_stop(poll_interval=0.01)
+
 
 else:
     print("Nepodařilo se získat snímek z kamery.")
