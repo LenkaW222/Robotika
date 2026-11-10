@@ -313,7 +313,9 @@ if __name__ == "__main__":
         exit()
 
     print("Všechny pohyby byly úspěšně dokončeny.")
+    print("Jupí")
 
     # Ukončení robota
     robot.stop_robot()
     robot.close_connection()
+    
