@@ -1,0 +1,457 @@
+import cv2
+import numpy as np
+from time import sleep, time
+from ctu_mitsubishi import Rv6s
+
+# ==========================================
+# KONSTANTY A LADICÍ PARAMETRY
+# ==========================================
+# Časový předstih predikce (v sekundách) pro kompenzaci doby pohybu ramene
+PREDICTION_LEAD = 0.2
+
+# Matice homografie H převádí souřadnice z kamery [u, v] (px) na souřadnice robota [X, Y] (mm)
+H = np.array([
+    [-0.000100, -0.261713, 842.805323],
+    [-0.267645, -0.000507, 422.676470],
+    [-0.000004,  0.000005,   1.000000]
+])
+
+# Bezpečná výchozí (domovská) poloha robota v metrech
+Home_position = np.array([
+    [1,  0,  0,  0.4],
+    [0, -1,  0, -0.3],
+    [0,  0, -1,  0.4],
+    [0,  0,  0,  1.0]
+])
+
+
+# ==========================================
+# POMOCNÉ FUNKCE PRO KINEMATIKU A VIDĚNÍ
+# ==========================================
+def safe_exit(robot, message):
+    """Vypíše chybovou zprávu, bezpečně zastaví robota a ukončí program."""
+    print(f"\n[KRITICKÁ CHYBA - UKONČUJI PROGRAM] {message}")
+    robot.stop_robot()
+    robot.close_connection()
+    exit()
+
+
+def transform_pixel_to_robot(point_pixel, H_mat):
+    """Převede 2D bod [u, v] z obrazu (v pixelech) na reálné [X, Y] robota v milimetrech."""
+    px_homo = np.array([point_pixel[0], point_pixel[1], 1.0], dtype=np.float32)
+    robot_homo = H_mat @ px_homo
+    x_mm = robot_homo[0] / robot_homo[2]
+    y_mm = robot_homo[1] / robot_homo[2]
+    return np.array([x_mm, y_mm])
+
+
+def get_ik_nearest(robot, position, q_ref):
+    """
+    Spočítá inverzní kinematiku (IK) pro cílovou matici 'position'.
+    Vybere konfiguraci kloubů nejbližší předchozí poloze 'q_ref'.
+    """
+    if position is None:
+        return None
+    qs = robot.ik(position)
+    if qs is None or len(qs) == 0:
+        return None
+    return min(qs, key=lambda q: np.linalg.norm(q - q_ref))
+
+
+def check_trajectory_collision(robot, q_start, q_end, steps=10):
+    """
+    Zkontroluje přechod mezi kloubovými konfiguracemi q_start a q_end.
+    Vrací (True, duvod_kolize) pokud hrozí kolize, jinak (False, "").
+    """
+    max_joint_diff = np.max(np.abs(q_end - q_start))
+    if max_joint_diff > 1.5:  # cca 86 stupňů v jednom kroku
+        return True, f"Nebezpečný skok kloubu o {np.degrees(max_joint_diff):.1f}° (riziko kolize při přetočení)."
+
+    for i in range(1, steps + 1):
+        alpha = i / steps
+        q_interp = (1.0 - alpha) * q_start + alpha * q_end
+        T_fk = robot.fk(q_interp)
+        
+        p_gripper = T_fk[0:3, 3]
+        R_gripper = T_fk[0:3, 0:3]
+        p_circle = p_gripper + R_gripper @ np.array([0.135, 0.0, 0.030])
+
+        # A) Kolize se základnou / stolem (base leží v Z = 7.0 cm)
+        if p_circle[2] < 0.085 or p_gripper[2] < 0.115:
+            return True, f"Nízká výška nad stolem (Z_obruč={p_circle[2]*100:.1f} cm, Z_gripper={p_gripper[2]*100:.1f} cm)."
+
+        # B) Autokolize: zápěstí příliš blízko ke sloupu / základně robota v rovině XY
+        dist_from_base_xy = np.hypot(p_gripper[0], p_gripper[1])
+        if dist_from_base_xy < 0.22:
+            return True, f"Gripper příliš blízko tělu robota (r={dist_from_base_xy*100:.1f} cm < 22 cm)."
+
+    return False, ""
+
+
+def move_bot(robot, position):
+    """Okamžitý blokující pohyb na zadanou pozici."""
+    q0 = robot.get_q()
+    qnew = get_ik_nearest(robot, position, q0)
+    if qnew is None:
+        print(f"[CHYBA IK] Pro pozici X={position[0,3]:.3f}, Y={position[1,3]:.3f}, Z={position[2,3]:.3f} neexistuje řešení.")
+        return False
+    
+    collision, reason = check_trajectory_collision(robot, q0, qnew)
+    if collision:
+        safe_exit(robot, f"Hrozí kolize při přípravném pohybu: {reason}")
+
+    robot.move_to_q(qnew)
+    robot.wait_for_motion_stop(poll_interval=0.01)
+    return True
+
+
+def move_home(robot):
+    """Bezpečný návrat do Home (nejprve zvedne nástroj nad Z = 32 cm, aby nenarazil do tyče)."""
+    print("Stěhování do domovské polohy (Home)...")
+    q0 = robot.get_q()
+    T_current = robot.fk(q0)
+    if T_current[2, 3] < 0.32:
+        T_lift = T_current.copy()
+        T_lift[2, 3] = 0.32
+        if not move_bot(robot, T_lift):
+            return False
+    return move_bot(robot, Home_position)
+
+
+def get_gripper_pose_for_circle_target(x_target_m, y_target_m, z_target_m, rotate_90_xy=False):
+    """
+    Spočítá cílovou transformační matici příruby gripperu (4x4) tak, aby se STŘED OBRUČE
+    nacházel přesně v souřadnicích [x_target_m, y_target_m, z_target_m].
+    """
+    if rotate_90_xy:
+        R_gripper = np.array([
+            [0,  1,  0],
+            [1,  0,  0],
+            [0,  0, -1]
+        ])
+    else:
+        R_gripper = np.array([
+            [1,  0,  0],
+            [0, -1,  0],
+            [0,  0, -1]
+        ])
+
+    p_circle_gripper = np.array([0.135, 0.0, 0.030])
+    v_robot_offset = R_gripper @ p_circle_gripper
+    
+    p_gripper = np.array([
+        x_target_m - v_robot_offset[0],
+        y_target_m - v_robot_offset[1],
+        z_target_m - v_robot_offset[2]
+    ])
+    
+    T_gripper = np.eye(4)
+    T_gripper[0:3, 0:3] = R_gripper
+    T_gripper[0:3, 3] = p_gripper
+    return T_gripper
+
+
+def get_base_info_px(img):
+    """Detekuje ArUco značky (ID 1 a ID 2) na základně a vrátí střed base a směrový vektor UP."""
+    aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+    detector = cv2.aruco.ArucoDetector(aruco_dict)
+    
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+    corners, ids, _ = detector.detectMarkers(gray)
+    
+    if ids is None:
+        return None, None
+        
+    ids_flat = ids.flatten()
+    markers = {marker_id: corners[idx].reshape(4, 2) for idx, marker_id in enumerate(ids_flat)}
+
+    if 1 in markers and 2 in markers:
+        base_center_px = (np.mean(markers[1], axis=0) + np.mean(markers[2], axis=0)) / 2.0
+    else:
+        target_id = 1 if 1 in markers else (2 if 2 in markers else None)
+        if target_id is None:
+            return None, None
+        pts = markers[target_id]
+        c_marker = np.mean(pts, axis=0)
+        u_vec = pts[1] - pts[0]
+        v_vec = pts[3] - pts[0]
+        side_length_px = (np.linalg.norm(u_vec) + np.linalg.norm(v_vec)) / 2.0
+        u_hat, v_hat = u_vec / np.linalg.norm(u_vec), v_vec / np.linalg.norm(v_vec)
+        offset_factor = 37.5 / 40.0
+        
+        if target_id == 1:
+            offset_vector_px = (u_hat * offset_factor * side_length_px) + (v_hat * offset_factor * side_length_px)
+        else:
+            offset_vector_px = (-u_hat * offset_factor * side_length_px) + (-v_hat * offset_factor * side_length_px)
+        base_center_px = c_marker + offset_vector_px
+
+    ref_id = 1 if 1 in markers else (2 if 2 in markers else None)
+    pts = markers[ref_id]
+    vec_up_px = ((pts[0] - pts[3]) + (pts[1] - pts[2])) / 2.0
+    dir_up_px = vec_up_px / np.linalg.norm(vec_up_px)
+
+    return base_center_px, dir_up_px
+
+
+def fit_circle_least_squares(points):
+    """Proloží nasbírané body středu base kružnicí a najde střed rotace."""
+    pts = np.array(points)
+    x, y = pts[:, 0], pts[:, 1]
+    A = np.column_stack([x, y, np.ones_like(x)])
+    B = -(x**2 + y**2)
+    a, b, c = np.linalg.lstsq(A, B, rcond=None)[0]
+    xc, yc = -a / 2.0, -b / 2.0
+    radius = np.sqrt(xc**2 + yc**2 - c)
+    return np.array([xc, yc]), radius
+
+
+def calculate_rotation(points, timestamps, center_pt):
+    """Spočítá úhlovou rychlost otáčení stolu w (rad/s) a periodu jedné otáčky."""
+    pts = np.array(points)
+    xc, yc = center_pt
+    angles = np.arctan2(pts[:, 1] - yc, pts[:, 0] - xc)
+    angles_unwrapped = np.unwrap(angles)
+    
+    delta_angles = np.diff(angles_unwrapped)
+    delta_times = np.diff(timestamps)
+    
+    mean_w_rad_s = np.mean(delta_angles / delta_times)
+    speed_deg_s = abs(np.degrees(mean_w_rad_s))
+    period_sec = (2 * np.pi) / abs(mean_w_rad_s) if mean_w_rad_s != 0 else 0
+    
+    return mean_w_rad_s, speed_deg_s, period_sec
+
+
+# ==========================================
+# HLAVNÍ PROGRAM - PUZZLE C
+# ==========================================
+if __name__ == "__main__":
+    robot = Rv6s(debug=False)
+    robot.initialize()
+
+    # ---------------------------------------------------------
+    # FÁZE 1 (t = 0 s): Přesun robota do Home pozice
+    # ---------------------------------------------------------
+    if not move_home(robot):
+        safe_exit(robot, "Chyba při přesunu do Home position.")
+
+    # ---------------------------------------------------------
+    # FÁZE 2 (t = 0 s až 20 s): Snímání rotace a identifikace parametrů
+    # ---------------------------------------------------------
+    base_centers_px = []
+    timestamps = []
+    dir_up_px_list = []
+    
+    total_duration = 20.0
+    interval = 1.0
+    total_frames = 0
+    
+    print("\n--- FÁZE 2: Snímání otáčení stolku (20s) ---")
+    t_start_scan = time()
+    last_grab = -interval
+
+    while (time() - t_start_scan) < total_duration:
+        curr_t = time() - t_start_scan
+        if curr_t - last_grab >= interval:
+            last_grab = curr_t
+            img = robot.grab_image()
+            if img is not None:
+                total_frames += 1
+                c_px, d_up_px = get_base_info_px(img)
+                if c_px is not None and d_up_px is not None:
+                    # Stejná kalibrace osy UP základny jako u tyče B
+                    d_up_px = -d_up_px
+                    base_centers_px.append(c_px)
+                    timestamps.append(curr_t)
+                    dir_up_px_list.append(d_up_px)
+                    print(f"[{curr_t:.1f}s] Detekováno ID -> střed base v px: ({c_px[0]:.1f}, {c_px[1]:.1f})")
+                else:
+                    print(f"[{curr_t:.1f}s] VAROVÁNÍ: Nebyly detekovány žádné ArUco značky (IDs)!")
+        sleep(0.05)
+
+    detected_count = len(base_centers_px)
+    if detected_count == 0:
+        safe_exit(robot, "Během 20s snímání nebyly vidět ŽÁDNÉ ArUco značky (IDs).")
+
+    if total_frames == 0 or detected_count <= (total_frames / 2.0):
+        safe_exit(
+            robot,
+            f"Nedostatečná detekce ArUco značek: viděno pouze v {detected_count} z {total_frames} snímků."
+        )
+
+    print(f"\nÚspěšnost detekce značek: {detected_count}/{total_frames} snímků ({(detected_count/total_frames)*100:.1f} %).")
+
+    # Výpočet středu rotace a rychlosti
+    rot_center_px, radius_px = fit_circle_least_squares(base_centers_px)
+    w_rad_s, speed_deg_s, period_s = calculate_rotation(base_centers_px, timestamps, rot_center_px)
+    
+    rot_center_mm = transform_pixel_to_robot(rot_center_px, H)
+    rot_center_m = rot_center_mm / 1000.0
+    print(f"Střed rotace: X={rot_center_m[0]:.4f} m, Y={rot_center_m[1]:.4f} m | Perioda: {period_s:.2f} s ({speed_deg_s:.2f} deg/s)")
+
+    use_rotated_gripper = rot_center_m[0] < 0.40
+    if use_rotated_gripper:
+        print(f"[INFO] X středu otáčení ({rot_center_m[0]*100:.1f} cm) < 40 cm -> Otáčím matici gripperu o 90° v rovině XY proti autokolizi.")
+    else:
+        print(f"[INFO] X středu otáčení ({rot_center_m[0]*100:.1f} cm) >= 40 cm -> Používám standardní orientaci gripperu.")
+
+    t0 = time()
+    dt_last = (t0 - t_start_scan) - timestamps[-1]
+
+    last_c_px = base_centers_px[-1]
+    angle_base_last = np.arctan2(last_c_px[1] - rot_center_px[1], last_c_px[0] - rot_center_px[0])
+    angle_base_t0 = angle_base_last + w_rad_s * dt_last
+
+    last_dir_up_px = dir_up_px_list[-1]
+    angle_up_offset = np.arctan2(last_dir_up_px[1], last_dir_up_px[0]) - angle_base_last
+
+    def predict_puzzle_c_points_m(dt_from_t0):
+        """
+        Předpoví 3 klíčové body půdorysu Puzzle C v metrech v čase (t0 + dt_from_t0):
+          1) p_base_m  : Střed základny [0, 0] (Z_tyč = 0 až 50 mm nad base)
+          2) p_elbow_m : První zlom [-50 mm UP, 0 mm LEFT] (Z_tyč = 100 mm nad base) -> 180° oproti B!
+          3) p_start_m : Horní svislá část [-50 mm UP, +50 mm LEFT] (Z_tyč = 150 až 200 mm nad base)
+        """
+        angle_future = angle_base_t0 + w_rad_s * dt_from_t0
+        base_future_px = rot_center_px + radius_px * np.array([np.cos(angle_future), np.sin(angle_future)])
+        
+        angle_up_future = angle_future + angle_up_offset
+        dir_up_future_px = np.array([np.cos(angle_up_future), np.sin(angle_up_future)])
+        
+        # Převod středu základny a směrového vektoru UP do souřadnic robota (mm)
+        p_base_mm = transform_pixel_to_robot(base_future_px, H)
+        p_test_mm = transform_pixel_to_robot(base_future_px + dir_up_future_px * 10.0, H)
+        
+        vec_up_mm = p_test_mm - p_base_mm
+        unit_up_mm = vec_up_mm / np.linalg.norm(vec_up_mm)
+        
+        # Vektor LEFT (kolmý o +90° v pravotočivém systému robota XY: [-uy, ux])
+        unit_left_mm = np.array([-unit_up_mm[1], unit_up_mm[0]])
+        
+        # 1. výklon od základny (mezi Z=50 a Z=100 mm): 50 mm na opačnou stranu než B (-unit_up_mm)
+        p_elbow_mm = p_base_mm - unit_up_mm * 50.0
+        
+        # 2. výklon k hornímu konci (mezi Z=100 a Z=150 mm): dalších 50 mm doleva (+unit_left_mm)
+        p_start_mm = p_elbow_mm + unit_left_mm * 50.0
+        
+        return p_base_mm / 1000.0, p_elbow_mm / 1000.0, p_start_mm / 1000.0
+
+    # ---------------------------------------------------------
+    # FÁZE 3: Přesun obruče nad střed otáčení (Z = 32 cm)
+    # ---------------------------------------------------------
+    print("\n--- FÁZE 3: Přesun středu obruče nad střed otáčení (Z = 32 cm) ---")
+    T_above_rot_center = get_gripper_pose_for_circle_target(
+        rot_center_m[0], rot_center_m[1], 0.32, rotate_90_xy=use_rotated_gripper
+    )
+    if not move_bot(robot, T_above_rot_center):
+        safe_exit(robot, "Nepodařilo se najet nad střed rotace (neexistuje IK).")
+
+    # ---------------------------------------------------------
+    # FÁZE 4: Předvýpočet celé trajektorie pro PUZZLE C do Qplan
+    # ---------------------------------------------------------
+    print(f"\n--- FÁZE 4: Výpočet trajektorie pro Puzzle C (předstih PREDICTION_LEAD = {PREDICTION_LEAD} s) ---")
+    q_parked = robot.get_q()
+    t_start_candidate = max(40.0 - (t0 - t_start_scan), (time() - t0) + 2.0)
+
+    Qplan = []
+    valid_plan_found = False
+
+    while not valid_plan_found:
+        global_start_t = (t0 - t_start_scan) + t_start_candidate
+        print(f"Počítám IK pro spuštění v t = {global_start_t:.2f} s (predikce pro t + {PREDICTION_LEAD} s)...")
+        
+        temp_plan = []
+        q_prev = q_parked
+        ik_failed = False
+
+        waypoints = []
+
+        # 1. Nájezd nad horní začátek tyče C ve výšce Z = 30 cm (vrchol tyče je ve 27 cm)
+        t1 = t_start_candidate
+        _, _, start_1_m = predict_puzzle_c_points_m(t1 + PREDICTION_LEAD)
+        waypoints.append((t1, start_1_m[0], start_1_m[1], 0.30, "1. Nad začátek tyče C (Z = 30 cm)"))
+
+        # 2. Svislý sjezd po horním rameni na 1. zlom ve výšce Z = 22 cm (70 + 150 mm)
+        t2 = t_start_candidate + 1.0
+        _, _, start_2_m = predict_puzzle_c_points_m(t2 + PREDICTION_LEAD)
+        waypoints.append((t2, start_2_m[0], start_2_m[1], 0.22, "2. Svislý sjezd na 1. zlom (Z = 22 cm)"))
+
+        # 2b. Mezikrok v polovině horního šikmého ramene (směr +UP o 25 mm, Z = 19.5 cm)
+        t2b = t_start_candidate + 1.5
+        _, elbow_2b_m, start_2b_m = predict_puzzle_c_points_m(t2b + PREDICTION_LEAD)
+        mid_upper_m = 0.5 * (start_2b_m + elbow_2b_m)
+        waypoints.append((t2b, mid_upper_m[0], mid_upper_m[1], 0.195, "2b. Střed horního šikmého úseku (Z = 19.5 cm)"))
+
+        # 3. Konec horního šikmého ramene / 2. zlom ve výšce Z = 17 cm (70 + 100 mm)
+        t3 = t_start_candidate + 2.0
+        _, elbow_3_m, _ = predict_puzzle_c_points_m(t3 + PREDICTION_LEAD)
+        waypoints.append((t3, elbow_3_m[0], elbow_3_m[1], 0.17, "3. Druhý zlom tyče C (Z = 17 cm)"))
+
+        # 3b. Mezikrok v polovině spodního šikmého ramene (směr -LEFT o 25 mm, Z = 14.5 cm)
+        t3b = t_start_candidate + 2.5
+        base_3b_m, elbow_3b_m, _ = predict_puzzle_c_points_m(t3b + PREDICTION_LEAD)
+        mid_lower_m = 0.5 * (elbow_3b_m + base_3b_m)
+        waypoints.append((t3b, mid_lower_m[0], mid_lower_m[1], 0.145, "3b. Střed spodního šikmého úseku (Z = 14.5 cm)"))
+
+        # 4. Konec spodního šikmého ramene / 3. zlom přímo nad středem base ve výšce Z = 12 cm (70 + 50 mm)
+        t4 = t_start_candidate + 3.0
+        base_4_m, _, _ = predict_puzzle_c_points_m(t4 + PREDICTION_LEAD)
+        waypoints.append((t4, base_4_m[0], base_4_m[1], 0.12, "4. Třetí zlom nad středem base (Z = 12 cm)"))
+
+        # 5. Finální svislý sjezd po spodním rameni k základně na Z = 9.5 cm
+        t5 = t_start_candidate + 4.0
+        base_5_m, _, _ = predict_puzzle_c_points_m(t5 + PREDICTION_LEAD)
+        waypoints.append((t5, base_5_m[0], base_5_m[1], 0.095, "5. Cílová pozice u base (Z = 9.5 cm)"))
+
+        # Výpočet IK a kontrola kolizí pro všechny body v trajektorii
+        for (t_exec, x_m, y_m, z_m, desc) in waypoints:
+            T_target = get_gripper_pose_for_circle_target(
+                x_m, y_m, z_m, rotate_90_xy=use_rotated_gripper
+            )
+            q_next = get_ik_nearest(robot, T_target, q_prev)
+            
+            if q_next is None:
+                print(f"  [IK SELHALO] u bodu '{desc}'. Posouvám start o +1.0 s a počítám znovu.")
+                ik_failed = True
+                break
+
+            collision, reason = check_trajectory_collision(robot, q_prev, q_next)
+            if collision:
+                safe_exit(robot, f"V nalezené trase hrozí kolize u bodu '{desc}': {reason}")
+                
+            temp_plan.append((t_exec, q_next, desc))
+            q_prev = q_next
+
+        if not ik_failed:
+            if (time() - t0) > temp_plan[0][0] - 0.5:
+                print("  [ČAS VYPRŠEL] Výpočet trval moc dlouho. Posouvám start o +2.0 s.")
+                t_start_candidate += 2.0
+            else:
+                Qplan = temp_plan
+                valid_plan_found = True
+                print(f"Kompletní bezkolizní trasa pro Puzzle C uložena do Qplan ({len(Qplan)} bodů)!")
+        else:
+            t_start_candidate += 1.0
+
+    # ---------------------------------------------------------
+    # FÁZE 5: Časově řízené vykonání předpočítané trasy
+    # ---------------------------------------------------------
+    print("\n--- FÁZE 5: Čekání na spuštění a vykonání pohybu ---")
+    idx = 0
+    while idx < len(Qplan):
+        elapsed_from_t0 = time() - t0
+        target_t, q_cmd, desc = Qplan[idx]
+        
+        if elapsed_from_t0 >= target_t:
+            real_time_total = time() - t_start_scan
+            print(f"[t = {real_time_total:.2f}s] {desc}")
+            robot.move_to_q(q_cmd)
+            idx += 1
+        else:
+            sleep(0.005)
+
+    robot.wait_for_motion_stop(poll_interval=0.01)
+    print("\nPrůchod Puzzle C úspěšně dokončen!")
+
+    robot.stop_robot()
+    robot.close_connection()
