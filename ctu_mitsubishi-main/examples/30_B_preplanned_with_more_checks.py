@@ -304,7 +304,7 @@ if __name__ == "__main__":
     # KONTROLA ÚSPĚŠNOSTI DETEKCE ArUco ZNAČEK
     detected_count = len(base_centers_px)
     if detected_count == 0:
-        safe_exit(robot, "Během 20s snímání nebyly vidět ŽÁDNÉ ArUco značky (IDs).")
+        safe_exit(robot, "Během 20s snímání nebyly vidět ŽÁDNÉ ArUco značky (IDs). Stred rotace bludiste je mimo pracovni prostor.")
 
     if total_frames == 0 or detected_count <= (total_frames / 2.0):
         safe_exit(
@@ -324,7 +324,7 @@ if __name__ == "__main__":
     
     y_min = -17
     y_max = 36
-    x_min = 37
+    x_min = 36
     x_max = 80
     max_dist = 80
 
@@ -336,7 +336,7 @@ if __name__ == "__main__":
     print(f"Střed rotace: X={rot_center_m[0]*100:.1f} cm, Y={rot_center_m[1]*100:.1f} cm | Perioda: {period_s:.2f} s ({speed_deg_s:.2f} deg/s)")
     print(f"Vzdalenost stredu otaceni od poatku robota: {dist:.1f} cm")
     # ROZHODNUTÍ O OTOČENÍ ROTAČNÍ MATICE GRIPPERU O 90° V XY (pokud X < 40 cm)
-    use_rotated_gripper = rot_center_m[0] < 0.40
+    use_rotated_gripper = rot_center_m[0] < 0.45
     if use_rotated_gripper:
         print(f"[INFO] X středu otáčení ({rot_center_m[0]*100:.1f} cm) < 40 cm -> Otáčím matici gripperu o 90° v rovině XY proti autokolizi.")
     else:
