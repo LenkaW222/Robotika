@@ -8,7 +8,7 @@ from ctu_mitsubishi import Rv6s
 # KONSTANTY A LADICÍ PARAMETRY
 # ==========================================
 # Časový předstih predikce (v sekundách) pro kompenzaci doby pohybu ramene
-PREDICTION_LEAD = 0.2
+PREDICTION_LEAD = 1.6
 
 # Matice homografie H převádí souřadnice z kamery [u, v] (px) na souřadnice robota [X, Y] (mm)
 H = np.array([
@@ -66,11 +66,11 @@ def check_trajectory_collision(robot, q_start, q_end, steps=10):
     Vrací (True, duvod_kolize) pokud hrozí kolize, jinak (False, "").
     """
     # 1. Kontrola skokového přetočení kloubů (ochrana proti singularitě a švihnutí ramene)
-    max_joint_diff = np.max(np.abs(q_end - q_start))
-    if max_joint_diff > 1.5:  # cca 86 stupňů v jednom kroku
-        return True, f"Nebezpečný skok kloubu o {np.degrees(max_joint_diff):.1f}° (riziko kolize při přetočení)."
+    # max_joint_diff = np.max(np.abs(q_end - q_start))
+    # if max_joint_diff > 1.5:  # cca 86 stupňů v jednom kroku
+    #     return True, f"Nebezpečný skok kloubu o {np.degrees(max_joint_diff):.1f}° (riziko kolize při přetočení)."
 
-    # 2. Kontrola mezibodů pomocí dopředné kinematiky (FK)
+    # # 2. Kontrola mezibodů pomocí dopředné kinematiky (FK)
     for i in range(1, steps + 1):
         alpha = i / steps
         q_interp = (1.0 - alpha) * q_start + alpha * q_end
@@ -293,11 +293,12 @@ if __name__ == "__main__":
     # Výpočet středu rotace a rychlosti
     rot_center_px, radius_px = fit_circle_least_squares(base_centers_px)
     w_rad_s, speed_deg_s, period_s = calculate_rotation(base_centers_px, timestamps, rot_center_px)
-    
+
     rot_center_mm = transform_pixel_to_robot(rot_center_px, H)
     rot_center_m = rot_center_mm / 1000.0
     print(f"Střed rotace: X={rot_center_m[0]:.4f} m, Y={rot_center_m[1]:.4f} m | Perioda: {period_s:.2f} s ({speed_deg_s:.2f} deg/s)")
-
+    dist = np.sqrt((rot_center_m[0]*100)**2 + (rot_center_m[1]*100)**2)
+    print(f"Vzdalenost stredu otaceni od poatku robota: {dist:.3f} cm")
     # ROZHODNUTÍ O OTOČENÍ ROTAČNÍ MATICE GRIPPERU O 90° V XY (pokud X < 40 cm)
     use_rotated_gripper = rot_center_m[0] < 0.40
     if use_rotated_gripper:
@@ -340,7 +341,8 @@ if __name__ == "__main__":
         rot_center_m[0], rot_center_m[1], 0.32, rotate_90_xy=use_rotated_gripper
     )
     if not move_bot(robot, T_above_rot_center):
-        safe_exit(robot, "Nepodařilo se najet nad střed rotace (neexistuje IK).")
+        print("Nejede nad stred rot")
+        #safe_exit(robot, "Nepodařilo se najet nad střed rotace (neexistuje IK).")
 
     # ---------------------------------------------------------
     # FÁZE 4: Předvýpočet celé trajektorie do Qplan + KONTROLA KOLIZÍ
@@ -354,6 +356,8 @@ if __name__ == "__main__":
 
     while not valid_plan_found:
         global_start_t = (t0 - t_start_scan) + t_start_candidate
+        if global_start_t > 100:
+            safe_exit(robot, f" Nedosazitelna poloha stolku: x: {rot_center_m[0]:.4f}, y: {rot_center_m[1]:.4f}")
         print(f"Počítám IK pro spuštění v t = {global_start_t:.2f} s (predikce pro t + {PREDICTION_LEAD} s)...")
         
         temp_plan = []

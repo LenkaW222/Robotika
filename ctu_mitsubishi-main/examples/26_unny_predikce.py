@@ -269,11 +269,6 @@ if __name__ == "__main__":
     t_track_start = time()
     ROBOT_DELAY = 1.1
 
-    dt_target = (time() - t_track_start) + ROBOT_DELAY
-    dt_target = dt_target % period_s
-
-    Qplan =[]
-
     cycles = 24
 
     for i in range (cycles):

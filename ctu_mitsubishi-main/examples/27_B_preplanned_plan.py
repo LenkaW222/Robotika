@@ -10,7 +10,7 @@ from ctu_mitsubishi import Rv6s
 # Časový předstih predikce (v sekundách):
 # Robot dostane povel v čase 't', ale míří tam, kde tyč bude v čase 't + PREDICTION_LEAD'.
 # Tím kompenzujeme dobu, než rameno fyzicky dojede do cílové polohy.
-PREDICTION_LEAD = 0.2
+PREDICTION_LEAD = 1.5
 
 # Matice homografie H převádí souřadnice z kamery [u, v] (px) na souřadnice robota [X, Y] (mm)
 H = np.array([

@@ -7,7 +7,7 @@ from ctu_mitsubishi import Rv6s
 # KONSTANTY A LADICÍ PARAMETRY
 # ==========================================
 # Časový předstih predikce (v sekundách) pro kompenzaci doby pohybu ramene
-PREDICTION_LEAD = 0.2
+PREDICTION_LEAD = 1.6
 
 # Matice homografie H převádí souřadnice z kamery [u, v] (px) na souřadnice robota [X, Y] (mm)
 H = np.array([
@@ -332,7 +332,7 @@ if __name__ == "__main__":
         p_elbow_mm = p_base_mm - unit_up_mm * 50.0
         
         # 2. výklon k hornímu konci (mezi Z=100 a Z=150 mm): dalších 50 mm doleva (+unit_left_mm)
-        p_start_mm = p_elbow_mm + unit_left_mm * 50.0
+        p_start_mm = p_elbow_mm - unit_left_mm * 50.0 #+ unit_up_mm * 50
         
         return p_base_mm / 1000.0, p_elbow_mm / 1000.0, p_start_mm / 1000.0
 
@@ -358,6 +358,8 @@ if __name__ == "__main__":
 
     while not valid_plan_found:
         global_start_t = (t0 - t_start_scan) + t_start_candidate
+        if global_start_t > 100:
+            safe_exit(robot, f" Nedosazitelna poloha stolku: x: {rot_center_m[0]:.4f}, y: {rot_center_m[1]:.4f}")
         print(f"Počítám IK pro spuštění v t = {global_start_t:.2f} s (predikce pro t + {PREDICTION_LEAD} s)...")
         
         temp_plan = []
