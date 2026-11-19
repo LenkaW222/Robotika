@@ -98,11 +98,19 @@ if __name__ == "__main__":
     robot = Rv6s(debug=False)
     robot.initialize()
 
+
+    qs = robot.ik(Home_position)
+    q_ref = robot.get_q()
+    q_wnated = min(qs, key=lambda q: np.linalg.norm(q - q_ref))
+
+    robot.move_to_q(q_wnated)
+    robot.wait_for_motion_stop()
+
     # ---------------------------------------------------------
     # FÁZE 1 (t = 0 s): Přesun robota do Home pozice
     # ---------------------------------------------------------
-    if not move_home(robot):
-        safe_exit(robot, "Chyba při přesunu do Home position.")
+    # if not move_home(robot):
+    #     safe_exit(robot, "Chyba při přesunu do Home position.")
 
     robot.stop_robot()
     robot.close_connection()

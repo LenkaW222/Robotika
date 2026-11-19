@@ -31,7 +31,7 @@ Home_position = np.array([
 # ==========================================
 def safe_exit(robot, message):
     """Vypíše chybovou zprávu, bezpečně zastaví robota a ukončí program."""
-    print(f"\n[KRITICKÁ CHYBA - UKONČUJI PROGRAM] {message}")
+    print(f"\n[UKONČUJI PROGRAM] z duvodu: {message}")
     robot.stop_robot()
     robot.close_connection()
     exit()
@@ -296,9 +296,20 @@ if __name__ == "__main__":
 
     rot_center_mm = transform_pixel_to_robot(rot_center_px, H)
     rot_center_m = rot_center_mm / 1000.0
-    print(f"Střed rotace: X={rot_center_m[0]:.4f} m, Y={rot_center_m[1]:.4f} m | Perioda: {period_s:.2f} s ({speed_deg_s:.2f} deg/s)")
+    
+    y_min = -17
+    y_max = 36
+    x_min = 37
+    x_max = 80
+    max_dist = 80
+
     dist = np.sqrt((rot_center_m[0]*100)**2 + (rot_center_m[1]*100)**2)
-    print(f"Vzdalenost stredu otaceni od poatku robota: {dist:.3f} cm")
+
+    if rot_center_m[0]*100 < x_min or rot_center_m[0]*100 > x_max or rot_center_m[1]*100 < y_min or rot_center_m[1]*100 > y_max or dist > max_dist:
+        safe_exit(robot,f"Stred rotace bludiste je mimo pracovni prostor robota: X={rot_center_m[0]*100:.1f} cm, Y={rot_center_m[1]*100:.1f} cm, vzdalenost: {dist:.1f} cm")
+
+    print(f"Střed rotace: X={rot_center_m[0]*100:.1f} cm, Y={rot_center_m[1]*100:.1f} cm | Perioda: {period_s:.2f} s ({speed_deg_s:.2f} deg/s)")
+    print(f"Vzdalenost stredu otaceni od poatku robota: {dist:.1f} cm")
     # ROZHODNUTÍ O OTOČENÍ ROTAČNÍ MATICE GRIPPERU O 90° V XY (pokud X < 40 cm)
     use_rotated_gripper = rot_center_m[0] < 0.40
     if use_rotated_gripper:
